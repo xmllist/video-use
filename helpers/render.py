@@ -131,6 +131,21 @@ def is_hdr_source(video: Path) -> bool:
         return False
 
 
+def is_portrait_source(video: Path) -> bool:
+    """Return True if the video's height > width (portrait / vertical)."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, check=True,
+        )
+        w, h = map(int, out.stdout.strip().split(","))
+        return h > w
+    except Exception:
+        return False
+
+
 # -------- Per-segment extraction (Rule 2 + Rule 3) --------------------------
 
 
@@ -146,6 +161,7 @@ def extract_segment(
     """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
 
     `-ss` before `-i` for fast accurate seeking. Scale to 1080p from 4K.
+    Portrait sources (height > width) are scaled by height to preserve orientation.
 
     Quality ladder:
       - final (default): 1080p libx264 fast CRF 20
@@ -154,10 +170,11 @@ def extract_segment(
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    portrait = is_portrait_source(source)
     if draft:
-        scale = "scale=1280:-2"
+        scale = "scale=-2:1280" if portrait else "scale=1280:-2"
     else:
-        scale = "scale=1920:-2"
+        scale = "scale=-2:1920" if portrait else "scale=1920:-2"
 
     vf_parts: list[str] = []
     if is_hdr_source(source):
