@@ -10,6 +10,7 @@ dependencies = [
     "matplotlib",
     "pillow",
     "numpy",
+    "whisperx>=3.8.6",
 ]
 
 [project.optional-dependencies]

@@ -31,6 +31,7 @@ These are the things where deviation produces silent failures or broken output. 
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
 12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `video-use/` project directory.
+13. **Honor source display orientation.** Phone / `.mov` sources often store frames one way (e.g. 1918×1080) but carry a `rotation` / display-matrix flag that makes them display rotated (portrait 1080×1918 ≈ 9:16). ffmpeg auto-rotates on decode, so check the *displayed* dimensions (`ffprobe -select_streams v:0 -show_entries stream_side_data=rotation`, or extract one frame and compare W vs H) before choosing a scale target. Forcing raw `width`×`height` produces a stretched, wrong-orientation render — a silent visual failure.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
@@ -57,22 +58,24 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 
 ## Setup
 
-First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
+First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration). Don't re-run it every session; on cold start just verify:
 
-- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, ask the user to paste one and write it to `.env` (never to the user's `<videos_dir>`).
+- Transcription is **local WhisperX** — no API key required. Confirm `whisperx` imports in the repo venv (`uv run python -c "import whisperx"`). The Whisper model downloads lazily on the first real transcription (~3 GB for `large-v3`).
+- Optional: a HuggingFace token (`HF_TOKEN` in `.env` at the repo root, or in the environment) enables speaker diarization (the `speaker_id` field). Without it, transcription still works; speaker labels are just null. Never write the token to the user's `<videos_dir>`.
 - `ffmpeg` + `ffprobe` on PATH.
 - Python deps installed (`uv sync` or `pip install -e .` inside the repo).
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
 - First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
 - This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
+- For burned-in subtitles (`render.py`) or `drawtext` titles, the local `ffmpeg` must be built with **libass / freetype**. Some minimal or Homebrew builds ship without the `subtitles` filter — check `ffmpeg -filters | grep -E "subtitles|drawtext"` before promising captions, and install a libass-enabled ffmpeg if missing. (Core filters — `scale`, `eq`, `overlay`, `afade`, `concat`, `loudnorm`, `setpts`, `atempo` — are present in any build.)
 
 Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file — the skill is typically symlinked at `~/.claude/skills/video-use/` or `~/.codex/skills/video-use/`.
 
 ## Helpers
 
-- **`transcribe.py <video>`** — single-file Scribe call. `--num-speakers N` optional. Cached.
-- **`transcribe_batch.py <videos_dir>`** — 4-worker parallel transcription. Use for multi-take.
+- **`transcribe.py <video>`** — single-file local WhisperX transcription (word-level alignment + optional diarization). `--num-speakers N`, `--model`, `--no-diarize` optional. Cached.
+- **`transcribe_batch.py <videos_dir>`** — batch transcription, one shared model loaded across all files. Use for multi-take.
 - **`pack_transcripts.py --edit-dir <dir>`** — `transcripts/*.json` → `takes_packed.md` (phrase-level, break on silence ≥ 0.5s).
 - **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly.
 - **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` for 720p fast. `--build-subtitles` to generate master.srt inline.
@@ -108,6 +111,17 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 - **Silence gaps are cut candidates.** Silences ≥400ms are usually the cleanest. 150–400ms phrase boundaries are usable with a visual check. <150ms is unsafe (mid-phrase).
 - **Example cut padding** (the launch video shipped with this): 50ms before the first kept word, 80ms after the last. Tighter for montage energy, looser for documentary. Stay in the 30–200ms working window (Hard Rule 7).
 - **Never reason audio and video independently.** Every cut must work on both tracks.
+
+## No-speech & process videos (timelapse, speed ramps)
+
+Not every video has narration. Coloring / drawing / craft process videos, b-roll, cooking, ASMR, and music-only montages have no usable transcript. WhisperX reports `No active speech found in audio` and then a low-confidence garbage language (e.g. `nn` at 0.9) — that pair is the signal to **drop the transcript-driven model and cut on visual progress instead**. Don't force ASR or burn time aligning a bogus language; kill it and switch modes.
+
+- **Detect early, then re-plan.** No speech → the "audio-first" cut model doesn't apply. `ffprobe` + `volumedetect` tells you whether the audio is music, ambient, or near-silent (mean ≈ −70 dB = effectively silent).
+- **Condense by speed, not only by cuts.** To take an N-minute process down to a short target, use variable speed. A proven shape: a **fast timelapse** for the bulk, then a **slow near-real-time pass for the payoff** (the reveal / final result), then **hold the finished frame ≥ 1s**. Confirm the speed split with the user — it's a taste call.
+- **Speed math.** `setpts=PTS/<f>` speeds video ×f; `atempo=<f>` speeds audio ×f (changes tempo, preserves pitch — no chipmunk). `atempo` takes large factors but chain ≤2 each for safety (×14 = `atempo=2,atempo=2,atempo=2,atempo=1.75`). Keep the video and audio factors equal per segment so they stay in sync. Per-segment extract → concat, same as the normal pipeline.
+- **Trim the INPUT, not the output.** `-ss` / `-t` MUST come *before* `-i` to trim what ffmpeg reads. Placed after `-i` they only cap output duration — with `setpts` the output is already short, so the cap is a silent no-op and each speed segment runs to end-of-file, **duplicating the ending**. (Caught this exact bug live: phases A and B both replayed the finale.)
+- **Find boundaries visually.** Build a contact sheet (`ffmpeg -ss <t> -i V -frames:v 1 ...` per timestamp, then `tile=NxM`) across the timeline and densely at the head/tail to pick the start (skip dead-air intro), where the reveal begins, and any trailing static to trim.
+- **Quiet audio.** Near-silent sources amplify their noise floor when boosted. For "make it louder", `loudnorm=I=-14:TP=-1:LRA=11` lifts it to the social standard (true-peak limited, no clip) — but warn that maximizing a silent source surfaces hiss. Cleaner alternative: mute and lay a music bed.
 
 ## The packed transcript (primary reading view)
 
@@ -309,8 +323,8 @@ Things that consistently fail regardless of style:
 
 - **Hierarchical pre-computed codec formats** with USABILITY / tone tags / shot layers. Over-engineering. Derive from the transcript at decision time.
 - **Hand-tuned moment-scoring functions.** The LLM picks better than any heuristic you'll write.
-- **Whisper SRT / phrase-level output.** Loses sub-second gap data. Always word-level verbatim.
-- **Running Whisper locally on CPU.** Slow and it normalizes fillers. Use hosted Scribe.
+- **SRT / phrase-level ASR output.** Loses sub-second gap data. Always word-level. (This is why we run WhisperX with forced word alignment, not plain Whisper segment output.)
+- **Expecting filler/audio-event signals from local Whisper.** Local WhisperX gives exact word boundaries + silence gaps, but drops fillers (um/uh) and does not tag `(laughs)`/`(applause)`. Lean on silence gaps and word boundaries for cuts; don't rely on filler tagging the way hosted Scribe allowed.
 - **Burning subtitles into base before compositing overlays.** Overlays hide them. (Hard Rule 1.)
 - **Single-pass filtergraph when you have overlays.** Double re-encodes. Use per-segment extract → concat.
 - **Linear animation easing.** Looks robotic. Always cubic.
@@ -320,3 +334,6 @@ Things that consistently fail regardless of style:
 - **Editing before confirming the strategy.** Never.
 - **Re-transcribing cached sources.** Immutable outputs of immutable inputs.
 - **Assuming what kind of video it is.** Look first, ask second, edit last.
+- **Assuming every video has speech.** Process / timelapse / music videos have none — cut on visual progress, not a transcript. (See "No-speech & process videos".)
+- **Forcing scale dimensions without checking rotation.** Phone sources display rotated; honor the display matrix or you ship stretched landscape of portrait content. (Hard Rule 13.)
+- **`-ss` / `-t` after `-i` for input trimming.** That's an output cap, not an input trim — speed segments run to EOF and duplicate the ending. Put them before `-i`.
