@@ -69,6 +69,7 @@ First-time install lives in `install.md` (clone, deps, ffmpeg, skill registratio
 - First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
 - This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
 - For burned-in subtitles (`render.py`) or `drawtext` titles, the local `ffmpeg` must be built with **libass / freetype**. Some minimal or Homebrew builds ship without the `subtitles` filter — check `ffmpeg -filters | grep -E "subtitles|drawtext"` before promising captions, and install a libass-enabled ffmpeg if missing. (Core filters — `scale`, `eq`, `overlay`, `afade`, `concat`, `loudnorm`, `setpts`, `atempo` — are present in any build.)
+- **OmniVoice (optional TTS voiceover).** For AI narration, install [OmniVoice](https://github.com/k2-fsa/OmniVoice) in its own venv and set `OMNIVOICE_HOME` to that checkout (the dir containing `.venv/`); `voiceover.py` invokes it through that venv. It's an external engine like the animation tools — not a video-use dependency. The model downloads from HuggingFace on first use.
 
 Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file — the skill is typically symlinked at `~/.claude/skills/video-use/` or `~/.codex/skills/video-use/`.
 
@@ -80,6 +81,7 @@ Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this
 - **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly.
 - **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` for 720p fast. `--build-subtitles` to generate master.srt inline.
 - **`grade.py <in> -o <out>`** — ffmpeg filter chain grade. Presets + `--filter '<raw>'` for custom.
+- **`voiceover.py --text "…" -o out.wav`** — OmniVoice TTS narration (OPTIONAL external engine). Auto voice, voice design (`--instruct`), or voice clone (`--ref-audio`). `--onto <video>` muxes the VO onto a clip (`--mix`/`--duck` to keep original under it). Needs `OMNIVOICE_HOME` (see Setup).
 
 For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a sub-agent via the `Agent` tool.
 
@@ -274,6 +276,18 @@ This is one style. If the brand is warm and serif, use that. If it's colorful an
 10. **"Do not ask questions. If anything is ambiguous, pick the most obvious interpretation and proceed."**
 
 One sub-agent = one file (unique filenames, parallel agents don't overwrite each other).
+
+## Voiceover / narration (OmniVoice TTS — optional)
+
+When a video needs narration it doesn't have — silent process/timelapse clips, montages, explainers from a script — generate it with `voiceover.py`, which wraps [OmniVoice](https://github.com/k2-fsa/OmniVoice) (a zero-shot multilingual TTS model). Optional external engine; set `OMNIVOICE_HOME` (see Setup).
+
+- **Voice modes.** Auto voice (just `--text`), voice **design** (`--instruct "warm female, british accent"` — no reference needed), or voice **clone** (`--ref-audio ref.wav --ref-text "transcript"`). Get the voice direction from the conversation; propose and confirm before generating, same as a grade or palette.
+- **Fit to picture.** `--duration <seconds>` locks the VO length (model adjusts pacing); `--speed` nudges rate. For tight sync, write the script *to* the shots, generate per line, place via the mux offset.
+- **Mux onto the cut.** `--onto <video> -o out.mp4`. Default **replaces** the audio; `--mix --duck 0.15` keeps the original ambient/music low underneath; `--offset <s>` delays the VO start. Video is copied (no re-encode); VO is resampled 24 kHz mono → 48 kHz stereo.
+- **Parallelize.** Multiple narration lines = parallel sub-agents, one WAV each (same rule as animations). The model loads per process, so batch a script into one call when you can.
+- **Languages.** OmniVoice covers 600+ languages; pass `--language` when autodetect is ambiguous. Pairs naturally with non-English footage (e.g. add a Vietnamese VO to a silent clip).
+
+This is generation, not correctness — no hard rules. Just confirm the voice with the user first.
 
 ## Output spec
 

@@ -17,6 +17,7 @@ Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works
 - **30ms audio fades** at every cut so you never hear a pop
 - **Burns subtitles** in your style — 2-word UPPERCASE chunks by default, fully customizable
 - **Generates animation overlays** via [HyperFrames](https://github.com/heygen-com/hyperframes), [Remotion](https://www.remotion.dev/), [Manim](https://www.manim.community/), or PIL — spawned in parallel sub-agents, one per animation
+- **Generates AI voiceover/narration** via [OmniVoice](https://github.com/k2-fsa/OmniVoice) TTS (optional) — auto voice, voice design, or voice cloning, then muxed onto any clip (great for narrating silent process/timelapse videos)
 - **Self-evaluates the rendered output** at every cut boundary before showing you anything
 - **Persists session memory** in `project.md` so next week's session picks up where you left off
 
