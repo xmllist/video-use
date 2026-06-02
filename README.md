@@ -6,11 +6,13 @@
 
 Introducing **video-use** — edit videos with Claude Code. 100% open source.
 
-Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works for any content — talking heads, montages, tutorials, travel, interviews — without presets or menus.
+> Fork of [browser-use/video-use](https://github.com/browser-use/video-use) with transcription swapped to **local [WhisperX](https://github.com/m-bain/whisperX)** — runs fully offline, no API key required.
+
+Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works for any content — talking heads, montages, tutorials, travel, interviews, and silent process/timelapse videos — without presets or menus.
 
 ## What it does
 
-- **Cuts out filler words** (`umm`, `uh`, false starts) and dead space between takes
+- **Tightens pacing** — cuts dead space between takes and snaps every edit to a word boundary
 - **Auto color grades** every segment (warm cinematic, neutral punch, or any custom ffmpeg chain)
 - **30ms audio fades** at every cut so you never hear a pop
 - **Burns subtitles** in your style — 2-word UPPERCASE chunks by default, fully customizable
@@ -23,12 +25,12 @@ Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works
 Paste into Claude Code, Codex, Hermes, Openclaw, or any agent with shell access:
 
 ```text
-Set up https://github.com/browser-use/video-use for me.
+Set up https://github.com/xmllist/video-use for me.
 
-Read install.md first to install this repo, wire up ffmpeg, register the skill with whichever agent you're running under, and set up the ElevenLabs API key — ask me to paste it when you need it. Then read SKILL.md for daily usage, and always read helpers/ because that's where the editing scripts live. After install, don't transcribe anything on your own — just tell me it's ready and wait for me to drop footage into a folder.
+Read install.md first to install this repo, wire up ffmpeg, and register the skill with whichever agent you're running under. Transcription is local (WhisperX) — no API key needed; only ask me for a HuggingFace token if I want speaker diarization. Then read SKILL.md for daily usage, and always read helpers/ because that's where the editing scripts live. After install, don't transcribe anything on your own — just tell me it's ready and wait for me to drop footage into a folder.
 ```
 
-The agent handles the clone, dependencies, skill registration, and prompts you once for your ElevenLabs API key (grab one at [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys)).
+The agent handles the clone, dependencies (WhisperX + ffmpeg), and skill registration. No API key is needed — transcription runs locally on your machine. Speaker diarization is optional and needs a free [HuggingFace token](https://huggingface.co/settings/tokens).
 
 Then point your agent at a folder of raw takes:
 
@@ -51,19 +53,19 @@ If you'd rather do it by hand:
 
 ```bash
 # 1. Clone and symlink into your agent's skills directory
-git clone https://github.com/browser-use/video-use ~/Developer/video-use
+git clone https://github.com/xmllist/video-use ~/Developer/video-use
 ln -sfn ~/Developer/video-use ~/.claude/skills/video-use        # Claude Code
 # ln -sfn ~/Developer/video-use ~/.codex/skills/video-use       # Codex
 
-# 2. Install deps
+# 2. Install deps (uv sync pulls WhisperX + torch — first run is a large download)
 cd ~/Developer/video-use
 uv sync                         # or: pip install -e .
 brew install ffmpeg             # required
 brew install yt-dlp             # optional, for downloading online sources
 
-# 3. Add your ElevenLabs API key
+# 3. (Optional) speaker diarization — local transcription itself needs no key
 cp .env.example .env
-$EDITOR .env                    # ELEVENLABS_API_KEY=...
+$EDITOR .env                    # HF_TOKEN=...  (only for speaker labels via pyannote)
 ```
 
 ## How it works
@@ -74,7 +76,7 @@ The LLM never watches the video. It **reads** it — through two layers that tog
   <img src="static/timeline-view.svg" alt="timeline_view composite — filmstrip + speaker track + waveform + word labels + silence-gap cut candidates" width="100%">
 </p>
 
-**Layer 1 — Audio transcript (always loaded).** One ElevenLabs Scribe call per source gives word-level timestamps, speaker diarization, and audio events (`(laughter)`, `(applause)`, `(sigh)`). All takes pack into a single ~12KB `takes_packed.md` — the LLM's primary reading view.
+**Layer 1 — Audio transcript (always loaded).** One local [WhisperX](https://github.com/m-bain/whisperX) pass per source gives word-level timestamps via forced alignment, plus optional speaker diarization (with a HuggingFace token). All takes pack into a single ~12KB `takes_packed.md` — the LLM's primary reading view. It runs offline; unlike hosted ASR it doesn't tag fillers or audio events, so cuts lean on silence gaps and word boundaries. For silent process/timelapse videos (no speech), the cut is driven by visual progress instead.
 
 ```
 ## C0103  (duration: 43.0s, 8 phrases)
